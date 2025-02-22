@@ -1,118 +1,117 @@
 import crewai
 import openai
 import json
+import os
+from dotenv import load_dotenv
+from crewai import Agent, Task, Crew, LLM
 
-# Load configuration
-with open('config.json') as f:
-    config = json.load(f)
+# Load environment variables (Ensure your .env contains OpenAI API keys)
+load_dotenv()
 
-openai.api_key = config['llm']['api_key']
+# Initialize LLM using Groq (Ensure your API key is set in the environment)
+llm = LLM(model="groq/llama-3.1-8b-instant")
 
-# Initialize CrewAI platform
-platform = crewai.Platform()
-
-# Define system prompts for each agent (task definitions)
+# Define system prompts
 user_interaction_prompt = """
-You are a helpful assistant. Given a user's request, extract the main task or goal and return a clear description of it. If the user gives multiple tasks, summarize them into one goal. For example, for 'Book a flight to New York and reserve a hotel', your response should be 'Plan a trip to New York.'
+You are a helpful assistant. Given a user's request, extract the main task or goal and return a clear description of it.
+If the user gives multiple tasks, summarize them into one goal.
 """
 
 subtask_generator_prompt = """
-You are a task breakdown assistant. Given a task or goal, break it down into smaller, actionable subtasks. If a subtask can be broken down further, do so iteratively. For example, for 'Plan a birthday party', the subtasks might be:
-1. Choose a venue
-2. Send invitations
-3. Arrange catering
-If you can't break it down further, return the final subtasks.
+You are a task breakdown assistant. Given a task or goal, break it down into smaller, actionable subtasks.
+If a subtask can be broken down further, do so iteratively. Stop if no further breakdown is needed.
 """
 
 plan_evaluator_prompt = """
-You are a plan evaluator. Given a list of subtasks, evaluate whether the plan is complete or needs improvement. Check for missing steps or incomplete tasks. If the plan is good, return 'Plan is ready'. If it needs improvement, suggest changes or refinements.
+You are a plan evaluator. Given a list of subtasks, evaluate whether the plan is complete or needs improvement.
+Check for missing steps. If the plan is good, return 'Plan is ready'. If not, suggest improvements.
 """
 
-# Define agents (using CrewAI's agent system)
-user_interaction_agent = platform.create_agent("User Interaction Agent", role="Handles user input and output")
-subtask_generator = platform.create_agent("Subtask Generator", role="Breaks down tasks into smaller subtasks iteratively")
-plan_evaluator = platform.create_agent("Plan Evaluator", role="Evaluates and improves the generated plan")
+# Define Agents
+user_interaction_agent = Agent(
+    name="User Interaction Agent",
+    role="Handles user input and extracts primary task",
+    goal="Extract the main task from user input",
+    backstory="An AI assistant designed to simplify user requests into clear tasks.",
+    llm=llm,
+    allow_delegation=True
+)
 
-# Assign the system prompts to the agents
-user_interaction_agent.set_system_prompt(user_interaction_prompt)
-subtask_generator.set_system_prompt(subtask_generator_prompt)
-plan_evaluator.set_system_prompt(plan_evaluator_prompt)
+subtask_generator = Agent(
+    name="Subtask Generator",
+    role="Breaks down main tasks into subtasks",
+    goal="Generate clear and actionable subtasks iteratively",
+    backstory="A highly efficient assistant for decomposing tasks",
+    llm=llm,
+    allow_delegation=True
+)
 
-# Define the Subtask Generator logic (iterative process)
-class SubtaskGenerator:
-    def __init__(self):
-        self.model = config['agents']['subtask_generator']['model']
-    
-    def generate_subtasks(self, task):
-        subtasks = []
-        while True:
-            response = openai.Completion.create(
-                model=self.model,
-                prompt=f"{subtask_generator_prompt}\nTask: {task}",
-                max_tokens=150
-            )
-            new_subtask = response['choices'][0]['text'].strip()
-            if new_subtask and new_subtask not in subtasks:
-                subtasks.append(new_subtask)
-                # If a new subtask is added, continue the process
-                task = new_subtask
-            else:
-                break  # No further subtasks can be generated
-        return subtasks
+plan_evaluator = Agent(
+    name="Plan Evaluator",
+    role="Evaluates the completeness of a task plan",
+    goal="Ensure task plans are complete and ready for execution",
+    backstory="An AI designed to check task plans for completeness and improvements.",
+    llm=llm
+)
 
-# Define the User Interaction Agent task logic
-def process_user_input(user_input):
-    # Send input to LLM and get response
-    response = openai.Completion.create(
-        model=config['agents']['user_interaction_agent']['model'],
-        prompt=f"{user_interaction_prompt}\nUser request: {user_input}",
-        max_tokens=100
-    )
-    return response['choices'][0]['text'].strip()
+# Define Tasks
+user_interaction_task = Task(
+    description="Extract the primary task from the user's input.",
+    expected_output="A concise summary of the user's goal.",
+    agent=user_interaction_agent,
+    llm=llm,
+    prompt=user_interaction_prompt
+)
 
-# Define Plan Evaluator task logic
-def evaluate_plan(subtasks):
-    subtasks_text = "\n".join(subtasks)
-    response = openai.Completion.create(
-        model=config['agents']['plan_evaluator']['model'],
-        prompt=f"{plan_evaluator_prompt}\nSubtasks: {subtasks_text}",
-        max_tokens=200
-    )
-    evaluation = response['choices'][0]['text'].strip()
-    if "improvement" in evaluation.lower():
-        return False  # Plan needs improvement
-    return True  # Plan is ready to be delivered
+subtask_generator_task = Task(
+    description="Break down the primary task into smaller subtasks iteratively.",
+    expected_output="A detailed list of subtasks.",
+    agent=subtask_generator,
+    llm=llm,
+    prompt=subtask_generator_prompt
+)
 
-# Assign the task of "Handling user input" to the User Interaction Agent
-user_interaction_agent.add_task("Handle user input", process_user_input)
+plan_evaluator_task = Task(
+    description="Evaluate the generated subtasks and suggest improvements if necessary.",
+    expected_output="Either 'Plan is ready' or a list of improvements.",
+    agent=plan_evaluator,
+    llm=llm,
+    prompt=plan_evaluator_prompt
+)
 
-# Assign the task of "Breaking down tasks into subtasks" to the Subtask Generator
-subtask_generator.add_task("Generate subtasks iteratively", SubtaskGenerator().generate_subtasks)
+# Create a Crew
+crew = Crew(
+    agents=[user_interaction_agent, subtask_generator, plan_evaluator],
+    tasks=[user_interaction_task, subtask_generator_task, plan_evaluator_task],
+    manager_llm=llm
+)
 
-# Assign the task of "Evaluating the generated plan" to the Plan Evaluator
-plan_evaluator.add_task("Evaluate generated plan", evaluate_plan)
-
-# Orchestrate the tasks
+# Orchestrate the process
 def orchestrate_event(user_input):
+    print(f"Processing User Input: {user_input}")
+
     # Step 1: Handle user input
-    user_input_result = user_interaction_agent.delegate_task(user_input)
-    
-    # Step 2: Generate subtasks based on user input
-    subtasks = subtask_generator.delegate_task(user_input_result)
-    
-    # Step 3: Evaluate the generated subtasks (plan)
-    plan_ready = plan_evaluator.delegate_task(subtasks)
-    
-    # Step 4: Return final result to the user if plan is ready
-    if plan_ready:
+    primary_task = user_interaction_agent.execute_task(user_interaction_task)
+    print(f"Primary Task Identified: {primary_task}")
+
+    # Step 2: Generate subtasks
+    subtasks = subtask_generator.execute_task(subtask_generator_task)
+    print(f"Generated Subtasks: {subtasks}")
+
+    # Step 3: Evaluate the plan
+    evaluation = plan_evaluator.execute_task(plan_evaluator_task)
+    print(f"Plan Evaluation: {evaluation}")
+
+    # Step 4: Final output
+    if "Plan is ready" in evaluation:
         return f"Plan is complete and ready: {subtasks}"
     else:
-        return f"Plan needs improvement: {subtasks}"
+        return f"Plan needs improvement: {evaluation}"
 
-# Automatically delegate tasks and monitor progress
+# Example User Input
 user_input = "Plan a birthday party"
 final_plan = orchestrate_event(user_input)
 print(final_plan)
 
-# Run the event orchestration process through CrewAI
-platform.run()
+# Run CrewAI execution
+crew.kickoff()
