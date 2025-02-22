@@ -1,15 +1,12 @@
-import crewai
-import openai
-import json
-import os
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, LLM
 
-# Load environment variables (Ensure your .env contains OpenAI API keys)
 load_dotenv()
 
 # Initialize LLM using Groq (Ensure your API key is set in the environment)
-llm = LLM(model="groq/llama-3.1-8b-instant")
+user_handling = LLM(model="groq/gemma2-9b-it")
+subtasks = LLM(model="groq/llama-3.3-70b-versatile")
+evaluate = LLM(model="groq/llama-3.1-8b-instant")
 
 # Define system prompts
 user_interaction_prompt = """
@@ -33,7 +30,7 @@ user_interaction_agent = Agent(
     role="Handles user input and extracts primary task",
     goal="Extract the main task from user input",
     backstory="An AI assistant designed to simplify user requests into clear tasks.",
-    llm=llm,
+    llm=user_handling,
     allow_delegation=True
 )
 
@@ -42,7 +39,7 @@ subtask_generator = Agent(
     role="Breaks down main tasks into subtasks",
     goal="Generate clear and actionable subtasks iteratively",
     backstory="A highly efficient assistant for decomposing tasks",
-    llm=llm,
+    llm=subtasks,
     allow_delegation=True
 )
 
@@ -51,7 +48,7 @@ plan_evaluator = Agent(
     role="Evaluates the completeness of a task plan",
     goal="Ensure task plans are complete and ready for execution",
     backstory="An AI designed to check task plans for completeness and improvements.",
-    llm=llm
+    llm=evaluate
 )
 
 # Define Tasks
@@ -59,7 +56,7 @@ user_interaction_task = Task(
     description="Extract the primary task from the user's input.",
     expected_output="A concise summary of the user's goal.",
     agent=user_interaction_agent,
-    llm=llm,
+    llm=user_handling,
     prompt=user_interaction_prompt
 )
 
@@ -67,7 +64,7 @@ subtask_generator_task = Task(
     description="Break down the primary task into smaller subtasks iteratively.",
     expected_output="A detailed list of subtasks.",
     agent=subtask_generator,
-    llm=llm,
+    llm=subtasks,
     prompt=subtask_generator_prompt
 )
 
@@ -75,7 +72,7 @@ plan_evaluator_task = Task(
     description="Evaluate the generated subtasks and suggest improvements if necessary.",
     expected_output="Either 'Plan is ready' or a list of improvements.",
     agent=plan_evaluator,
-    llm=llm,
+    llm=evaluate,
     prompt=plan_evaluator_prompt
 )
 
@@ -83,7 +80,7 @@ plan_evaluator_task = Task(
 crew = Crew(
     agents=[user_interaction_agent, subtask_generator, plan_evaluator],
     tasks=[user_interaction_task, subtask_generator_task, plan_evaluator_task],
-    manager_llm=llm
+    manager_llm=subtasks
 )
 
 # Orchestrate the process
