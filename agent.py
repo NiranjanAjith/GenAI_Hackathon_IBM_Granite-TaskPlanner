@@ -98,7 +98,7 @@ user_input = st.text_area("Enter your task:")
 
 if st.button("Generate Flowchart"):
     if user_input:
-         # Execute User Interaction Agent to get primary task
+        # Execute User Interaction Agent to get primary task
         primary_task = user_interaction_agent.execute_task(user_interaction_task, context={"user_input": user_input})
 
         # Modify Subtask Generator Prompt with Primary Task Result
@@ -110,11 +110,11 @@ if st.button("Generate Flowchart"):
         # Generate Flowchart with Subtask Generator and Plan Evaluator Results
         dot_flowchart = flowchart_generator.execute_task(flowchart_generator_task, context={"subtasks_result": subtasks_result, "plan_evaluation_result": plan_evaluation_result})
 
-        # Show subtasks result in a text box
-        st.text_area("Subtasks Breakdown", value=str(subtasks_result), height=200)
-
-         # Display Flowchart
+        # Display Flowchart first
         st.write("📊 Flowchart Visualization:")
         st.graphviz_chart(dot_flowchart)
+
+        # Show subtasks result in a text box
+        st.text_area("Subtasks Breakdown", value=str(subtasks_result), height=200)
     else:
         st.warning("⚠️ Please enter a valid task.")
